@@ -14,6 +14,11 @@ build:
 fmtcheck: ## run gofmt and print detected files
 	@sh -c "'$(CURDIR)/scripts/gofmtcheck.sh'"
 
+.PHONY: clean
+clean:
+	@sh -c "rm ./$(PROJECT)"
+	go mod tidy
+
 PHONY: test
 test: ## run go tests
 	go test -v ./...

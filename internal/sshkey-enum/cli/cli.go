@@ -1,14 +1,12 @@
 package cli
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 
-	"github.com/ranguli/sshkey-enum/internal/pkg/file"
-	"github.com/ranguli/sshkey-enum/internal/pkg/flagchecker"
+	"github.com/ranguli/sshkey-enum/pkg/sshclient"
 )
 
 func usage() {
@@ -17,25 +15,18 @@ func usage() {
 	os.Exit(1)
 }
 
-func newOptions(host string, hostIsWordlist bool, username string, usernameIsWordlist bool, key string, port int) *options {
-	options := options{host: host, hostIsWordlist: hostIsWordlist, username: username, usernameIsWordlist: usernameIsWordlist, key: key, port: port}
-	return &options
+func newOptions(host string, hostIsWordlist bool, username string, usernameIsWordlist bool, keyFile string, port int) *Options {
+	cli_options := Options{host: host, hostIsWordlist: hostIsWordlist, username: username, usernameIsWordlist: usernameIsWordlist, keyFile: keyFile, port: port}
+	return &cli_options
 }
 
-type options struct {
+type Options struct {
 	host               string
 	hostIsWordlist     bool
 	username           string
 	usernameIsWordlist bool
-	key                string
+	keyFile            string
 	port               int
-}
-
-type credentials struct {
-	host     string
-	username string
-	key      string
-	port     int
 }
 
 func Run() {
@@ -43,7 +34,7 @@ func Run() {
 	usernameFile := flag.String("U", "", "Wordlist of usernames")
 	host := flag.String("h", "", "IP Address")
 	hostFile := flag.String("H", "", "Wordlist of IPs for multiple SSH servers")
-	key := flag.String("i", "", "SSH public key.")
+	keyFile := flag.String("i", "", "SSH private key.")
 	port := flag.Int("p", 22, "Port for the SSH server")
 
 	flag.Parse()
@@ -53,55 +44,44 @@ func Run() {
 		usage()
 	}
 
-	options, err := parseOptions(*host, *hostFile, *username, *usernameFile, *key, *port)
-
+	cli_options, err := parseOptions(*host, *hostFile, *username, *usernameFile, *keyFile, *port)
 	if err != nil {
 		fmt.Println(err)
-		usage()
+		os.Exit(1)
 	}
 
-	fmt.Println(options)
+	hosts, err := parseHosts(*cli_options)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	usernames, err := parseUsernames(*cli_options)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	for i := range hosts {
+		for j := range usernames {
+			log.Printf("Host: %s\t Username: %s\n", hosts[i], usernames[j])
+
+			credentials := sshclient.Credentials{Host: hosts[i], Username: usernames[j], Keyfile: cli_options.keyFile, Port: cli_options.port}
+			success, _ := sshclient.Connect(credentials)
+
+			if success {
+				fmt.Println(successMessage(credentials))
+			} else {
+				fmt.Println(failureMessage(credentials))
+			}
+		}
+	}
 }
 
-func parseOptions(host string, hostFile string, username string, usernameFile string, key string, port int) (*options, error) {
-	hostIsWordlist := false
-	usernameIsWordlist := false
+func successMessage(creds sshclient.Credentials) string {
+	return fmt.Sprintf("[SUCCESS] %s@%s:%d", creds.Username, creds.Host, creds.Port)
+}
 
-	log.Printf("Input received:\n host: %s\t username: %s\t key: %s\t", host, username, key)
-
-	if flagchecker.CheckDualFlag(username, usernameFile) {
-		return nil, errors.New(badOptionMessage("-u", "-U"))
-	}
-
-	if flagchecker.CheckDualFlag(host, hostFile) {
-		return nil, errors.New(badOptionMessage("-h", "-H"))
-	}
-
-	if len(host) == 0 {
-		hostIsWordlist = true
-
-		if len(hostFile) == 0 {
-			return nil, errors.New(file.FileErrorMessage(hostFile))
-		}
-	}
-
-	if len(username) == 0 {
-		usernameIsWordlist = true
-		if len(usernameFile) == 0 {
-			return nil, errors.New(file.FileErrorMessage(usernameFile))
-		}
-	}
-
-	if len(key) == 0 {
-		return nil, errors.New("Please provide an SSH public key with -i")
-	} else if !file.FileExists(key) {
-		return nil, errors.New(file.FileErrorMessage(key))
-	}
-
-	options := newOptions(host, hostIsWordlist, username, usernameIsWordlist, key, port)
-
-	log.Println(options)
-	return options, nil
+func failureMessage(creds sshclient.Credentials) string {
+	return fmt.Sprintf("[FAIL] %s@%s:%d", creds.Username, creds.Host, creds.Port)
 }
 
 func badOptionMessage(option1 string, option2 string) string {
